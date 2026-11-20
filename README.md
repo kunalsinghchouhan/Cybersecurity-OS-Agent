@@ -86,6 +86,27 @@ Cybersecurity-OS-Agent/
 streamlit run dashboard.py
 ```
 
+## Deploying from GitHub
+
+This dashboard can be deployed from the `cloud-deployment` branch with
+[Streamlit Community Cloud](https://share.streamlit.io/):
+
+1. Connect your GitHub account and select this repository.
+2. Select the `cloud-deployment` branch and set the app file to
+   `dashboard.py`.
+3. In the app's **Advanced settings → Secrets**, add:
+
+   ```toml
+   CLOUD_MODE = true
+   ```
+
+Cloud mode runs the dashboard without starting the local Windows monitoring
+agent. It does not connect to a remote agent automatically. AI alert analysis
+also requires an Ollama service reachable from the deployed app; the default
+`localhost` Ollama address refers to the cloud container itself.
+
+Community Cloud redeploys the app when the selected GitHub branch is updated.
+
 ## Disclaimer
 
 This project is developed for educational and cybersecurity monitoring purposes. Network monitoring and packet capture should only be performed on systems and networks where appropriate authorization has been obtained.

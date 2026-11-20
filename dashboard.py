@@ -1,13 +1,41 @@
+
+import os
 import json
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
-from agent_controller import (
-    start_agent,
-    stop_agent,
-    get_agent_status
-)
+
+# -----------------------------------------
+# DEPLOYMENT MODE
+# -----------------------------------------
+
+try:
+    CLOUD_MODE = (
+        str(st.secrets.get("CLOUD_MODE", "false")).lower() == "true"
+    )
+except Exception:
+    CLOUD_MODE = False
+
+# -----------------------------------------
+# LOCAL AGENT IMPORTS
+# -----------------------------------------
+
+if not CLOUD_MODE:
+    from agent_controller import (
+        start_agent,
+        stop_agent,
+        get_agent_status
+    )
+
+    from connectivity_monitor import (
+        start_connectivity_monitor,
+        get_internet_status
+    )
+
+# -----------------------------------------
+# DATABASE
+# -----------------------------------------
 
 from database import (
     initialize_database,
@@ -19,12 +47,12 @@ from database import (
 from MITRE_mapping import get_mitre_mapping
 from ai_analyzer import analyze_alert
 
-from connectivity_monitor import (
-    start_connectivity_monitor,
-    get_internet_status
-)
+# -----------------------------------------
+# AUTHENTICATION
+# -----------------------------------------
 
 from auth import (
+    CookieController,
     init_auth_db,
     get_current_user,
     render_auth_page,
@@ -45,40 +73,67 @@ st.set_page_config(
 
 # Authentication
 init_auth_db()
-current_user = get_current_user()
+cookie_controller = CookieController()
+current_user = get_current_user(cookie_controller)
 
 if current_user is None:
-    render_auth_page()
+    # The cookie component needs one browser round trip on a fresh page load.
+    # Avoid showing the login form until that saved-cookie check has completed.
+    if not st.session_state.get("auth_cookie_check_started"):
+        st.session_state["auth_cookie_check_started"] = True
+        st_autorefresh(interval=1500, key="auth_cookie_bootstrap")
+        st.info("Checking for a saved sign-in...")
+        st.stop()
+
+    render_auth_page(cookie_controller)
     st.stop()
 
 # Initialize security database after authentication
 initialize_database()
-if "connectivity_started" not in st.session_state:
-
-    start_connectivity_monitor()
-
-    st.session_state.connectivity_started = True
 
 # ==================================================
-# INTERNET CONNECTION ERROR DISPLAY
+# LOCAL CONNECTIVITY MONITOR STARTUP
 # ==================================================
 
-internet = get_internet_status()
+if not CLOUD_MODE:
 
-if internet["status"] == "OFFLINE":
+    if "connectivity_started" not in st.session_state:
 
-    st.error(
-        "Internet Connection Lost! "
-        "Please check your internet connection and try again."
+        success, message = start_connectivity_monitor()
+
+        st.session_state.connectivity_started = success
+
+# ==================================================
+# INTERNET CONNECTION STATUS DISPLAY
+# ==================================================
+
+if CLOUD_MODE:
+
+    st.info(
+        "Connectivity monitoring is currently running only "
+        "on the local Windows agent. Remote agent integration "
+        "will be configured separately."
     )
-
-elif internet["status"] == "UNKNOWN":
-
-    st.warning("Checking internet connectivity...")
 
 else:
 
-    st.success("Internet Connection: Connected")
+    internet = get_internet_status()
+
+    if internet["status"] == "OFFLINE":
+
+        st.error(
+            "Internet Connection Lost! "
+            "Please check your internet connection and try again."
+        )
+
+    elif internet["status"] == "UNKNOWN":
+
+        st.warning("Checking internet connectivity...")
+
+    else:
+
+        st.success("Internet Connection: Connected")
+
 
 # ==================================================
 # 2. CUSTOM CSS
@@ -237,11 +292,6 @@ try:
 
     alerts_df = pd.DataFrame(alerts)
     network_df = pd.DataFrame(packets)
-    st.write("PROTOCOL DEBUG:")
-    if not network_df.empty:
-        st.write(network_df["protocol"].value_counts())
-    else:
-        st.write("No network packets found.")
 
 except Exception as error:
     st.error(f"Database retrieval error: {error}")
@@ -374,7 +424,7 @@ st.sidebar.caption(
 )
 
 if st.sidebar.button("Log out", use_container_width=True):
-    logout_user()
+    logout_user(cookie_controller)
     st.rerun()
 
 st.sidebar.divider()
@@ -391,66 +441,88 @@ selected_page = st.sidebar.radio(
     ]
 )
 
+# Avoid interrupting long running AI requests with the dashboard's
+# periodic refresh. Other pages continue to refresh normally.
+if not CLOUD_MODE and selected_page != "AI Analysis":
+    connectivity_status = get_internet_status()["status"]
+    st_autorefresh(
+        interval=1000 if connectivity_status == "UNKNOWN" else 15000,
+        key="dashboard_auto_refresh"
+    )
+
 
 # ==================================================
 # 8. AGENT CONTROL CENTER
 # ==================================================
 
+
 st.sidebar.divider()
 st.sidebar.subheader("Agent Control")
 
-try:
-    current_agent_status = get_agent_status()
-    status_text = format_agent_status(current_agent_status)
+if CLOUD_MODE:
 
-except Exception as error:
-    status_text = f"Unavailable: {error}"
+    st.sidebar.info(
+        "Cloud Dashboard Mode: The local Windows monitoring "
+        "agent is not running on this server."
+    )
 
-st.sidebar.caption("Current Agent Status")
-st.sidebar.info(status_text)
-
-if current_user["role"] == "Admin":
-
-    control_col1, control_col2 = st.sidebar.columns(2)
-
-    with control_col1:
-
-        if st.button("▶ Start", use_container_width=True):
-
-            try:
-                success, message = start_agent()
-
-                if success:
-                    st.sidebar.success(message)
-                else:
-                    st.sidebar.warning(message)
-
-                st.rerun()
-
-            except Exception as error:
-                st.sidebar.error(f"Start failed: {error}")
-
-    with control_col2:
-
-        if st.button("⏹ Stop", use_container_width=True):
-
-            try:
-                success, message = stop_agent()
-
-                if success:
-                    st.sidebar.success(message)
-                else:
-                    st.sidebar.warning(message)
-
-                st.rerun()
-
-            except Exception as error:
-                st.sidebar.error(f"Stop failed: {error}")
+    st.sidebar.caption("Agent Status")
+    st.sidebar.warning("Remote Agent: Not Connected")
 
 else:
-    st.sidebar.info(
-        "Agent controls are available to Admin users only."
-    )
+
+    try:
+        current_agent_status = get_agent_status()
+        status_text = format_agent_status(current_agent_status)
+
+    except Exception as error:
+        status_text = f"Unavailable: {error}"
+
+    st.sidebar.caption("Current Agent Status")
+    st.sidebar.info(status_text)
+
+    if current_user["role"] == "Admin":
+
+        control_col1, control_col2 = st.sidebar.columns(2)
+
+        with control_col1:
+
+            if st.button("▶ Start", use_container_width=True):
+
+                try:
+                    success, message = start_agent()
+
+                    if success:
+                        st.sidebar.success(message)
+                    else:
+                        st.sidebar.warning(message)
+
+                    st.rerun()
+
+                except Exception as error:
+                    st.sidebar.error(f"Start failed: {error}")
+
+        with control_col2:
+
+            if st.button("⏹ Stop", use_container_width=True):
+
+                try:
+                    success, message = stop_agent()
+
+                    if success:
+                        st.sidebar.success(message)
+                    else:
+                        st.sidebar.warning(message)
+
+                    st.rerun()
+
+                except Exception as error:
+                    st.sidebar.error(f"Stop failed: {error}")
+
+    else:
+        st.sidebar.info(
+            "Agent controls are available to Admin users only."
+        )
 
 st.sidebar.divider()
 
@@ -473,6 +545,16 @@ st.markdown(
     f'</div>',
     unsafe_allow_html=True
 )
+# ==================================================
+# PROTOCOL DEBUG
+# ==================================================
+
+st.write("PROTOCOL DEBUG:")
+
+if not network_df.empty:
+    st.write(network_df["protocol"].value_counts())
+else:
+    st.write("No network packets found.")
 
 
 # ==================================================
@@ -1588,7 +1670,6 @@ elif selected_page == "Network Monitoring":
                 "No DNS queries have been captured yet."
             )
 
-
 # ==================================================
 # PAGE 6: AI ANALYSIS
 # ==================================================
@@ -1600,6 +1681,10 @@ elif selected_page == "AI Analysis":
         "Analyze selected security alerts using your "
         "existing AI analyzer."
     )
+
+    # Initialize analysis cache
+    if "ai_analysis_cache" not in st.session_state:
+        st.session_state.ai_analysis_cache = {}
 
     if alerts_df.empty:
 
@@ -1679,32 +1764,37 @@ elif selected_page == "AI Analysis":
 
             st.divider()
 
+            # Create a cache key for this alert version
+            cache_key = (
+                str(alert.get("id")),
+                str(alert.get("timestamp")),
+                str(alert.get("description"))
+            )
+
+            # Reuse a previous result for the same version of this alert.
+            cached_analysis = st.session_state.ai_analysis_cache.get(cache_key)
+
             if st.button(
                 "Analyze Alert",
-                use_container_width=True
+                use_container_width=True,
+                key="run_ai_analysis"
             ):
-
-                with st.spinner("Analyzing alert..."):
-
+                with st.spinner("AI is analyzing the security alert..."):
                     try:
-
-                        analysis = analyze_alert(alert)
-
-                        st.subheader("Analysis Result")
-
-                        if isinstance(analysis, (dict, list)):
-
-                            st.json(analysis)
-
-                        else:
-
-                            st.markdown(str(analysis))
-
+                        cached_analysis = analyze_alert(alert)
+                        st.session_state.ai_analysis_cache[cache_key] = cached_analysis
+                        st.rerun()
                     except Exception as error:
+                        cached_analysis = None
+                        st.error(f"AI analysis failed: {error}")
 
-                        st.error(
-                            f"AI analysis failed: {error}"
-                        )
+            if cached_analysis is not None:
+                st.divider()
+                st.subheader("Analysis Result")
+                if isinstance(cached_analysis, (dict, list)):
+                    st.json(cached_analysis)
+                else:
+                    st.markdown(str(cached_analysis))
 
 
 # ==================================================

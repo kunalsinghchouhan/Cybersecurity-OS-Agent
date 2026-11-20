@@ -9,11 +9,15 @@ import hashlib
 import hmac
 import os
 import re
+import secrets
 import sqlite3
+import time
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
+from streamlit_cookies_controller import CookieController
 
 
 AUTH_DB = Path(__file__).resolve().parent / "security_agent_users.db"
@@ -21,6 +25,8 @@ HASH_NAME = "sha256"
 PBKDF2_ITERATIONS = 310_000
 SALT_BYTES = 16
 MIN_PASSWORD_LENGTH = 10
+SESSION_COOKIE_NAME = "cybersecurity_os_session"
+SESSION_TTL_DAYS = 30
 
 
 def _connect():
@@ -46,7 +52,91 @@ def init_auth_db():
                     CHECK(is_active IN (0, 1))
             )
         """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS AuthSessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES Users(id) ON DELETE CASCADE
+            )
+        """)
         connection.commit()
+
+
+def _session_token_hash(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_auth_session(user_id):
+    """Create a random, revocable login token and return its raw value."""
+    token = secrets.token_urlsafe(32)
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS)
+    ).isoformat()
+    with closing(_connect()) as connection:
+        connection.execute(
+            "INSERT INTO AuthSessions (token_hash, user_id, expires_at) "
+            "VALUES (?, ?, ?)",
+            (_session_token_hash(token), user_id, expires_at)
+        )
+        connection.commit()
+    return token
+
+
+def _get_user_for_session(token):
+    if not isinstance(token, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]{40,50}", token
+    ):
+        return None
+
+    now = datetime.now(timezone.utc).isoformat()
+    with closing(_connect()) as connection:
+        row = connection.execute(
+            """
+            SELECT Users.id, Users.username, Users.email, Users.role
+            FROM AuthSessions
+            JOIN Users ON Users.id = AuthSessions.user_id
+            WHERE AuthSessions.token_hash = ?
+              AND AuthSessions.expires_at > ?
+              AND Users.is_active = 1
+            """,
+            (_session_token_hash(token), now)
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "email": row["email"],
+        "role": row["role"]
+    }
+
+
+def revoke_auth_session(token):
+    if not isinstance(token, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]{40,50}", token
+    ):
+        return
+    with closing(_connect()) as connection:
+        connection.execute(
+            "DELETE FROM AuthSessions WHERE token_hash = ?",
+            (_session_token_hash(token),)
+        )
+        connection.commit()
+
+
+def _save_session_cookie(cookie_controller, user_id):
+    token = create_auth_session(user_id)
+    cookie_controller.set(
+        SESSION_COOKIE_NAME,
+        token,
+        expires=datetime.now() + timedelta(days=SESSION_TTL_DAYS),
+        max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
+        same_site="lax"
+    )
+    # Let the cookie component send the write to the browser before rerunning.
+    time.sleep(1)
 
 
 def _hash_password(password, salt=None):
@@ -197,19 +287,30 @@ def authenticate_user(username_or_email, password):
         return None
 
 
-def get_current_user():
-    """Return the authenticated user stored in this Streamlit session."""
+def get_current_user(cookie_controller):
+    """Restore the authenticated user from session state or browser cookie."""
     user = st.session_state.get("authenticated_user")
-    return user if isinstance(user, dict) else None
+    if isinstance(user, dict):
+        return user
+
+    token = cookie_controller.get(SESSION_COOKIE_NAME)
+    user = _get_user_for_session(token)
+    if user is not None:
+        st.session_state["authenticated_user"] = user
+    return user
 
 
-def logout_user():
+def logout_user(cookie_controller):
     """Clear authentication state for this browser session."""
+    token = cookie_controller.get(SESSION_COOKIE_NAME)
+    revoke_auth_session(token)
+    cookie_controller.remove(SESSION_COOKIE_NAME)
     st.session_state.pop("authenticated_user", None)
+    time.sleep(1)
     st.rerun()
 
 
-def render_auth_page():
+def render_auth_page(cookie_controller):
     """Render the login and self-registration interface."""
     st.markdown(
         """
@@ -271,6 +372,7 @@ def render_auth_page():
             if submitted:
                 user = authenticate_user(identity, password)
                 if user:
+                    _save_session_cookie(cookie_controller, user["id"])
                     st.session_state["authenticated_user"] = user
                     st.rerun()
                 else:
@@ -314,6 +416,7 @@ def render_auth_page():
                         new_password
                     )
                     if success:
+                        _save_session_cookie(cookie_controller, user["id"])
                         st.session_state["authenticated_user"] = user
                         st.success(message)
                         st.rerun()

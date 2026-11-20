@@ -1,4 +1,3 @@
-
 import requests
 import json
 import time
@@ -94,13 +93,17 @@ Rules:
         "stream": False,
         "keep_alive": "30m",
         "options": {
-            "temperature": 0.2,
-            "num_predict": 450,
-            "num_ctx": 4096
-        }
+        "temperature": 0.2,
+        "num_predict": 700,
+        "num_ctx": 2048
+    }
     }
 
     try:
+
+        print("[AI DEBUG] Sending request to Ollama...")
+
+        request_start = time.perf_counter()
 
         response = session.post(
             OLLAMA_URL,
@@ -108,7 +111,14 @@ Rules:
             timeout=(5, 120)
         )
 
+        print(
+            f"[AI DEBUG] Ollama responded in "
+            f"{time.perf_counter() - request_start:.2f} seconds"
+        )
+
         response.raise_for_status()
+
+        # response.raise_for_status()
 
         result = response.json()
 

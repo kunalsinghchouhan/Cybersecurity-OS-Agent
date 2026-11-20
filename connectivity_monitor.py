@@ -10,7 +10,7 @@ from pathlib import Path
 # --------------------------------------------------
 
 CHECK_INTERVAL = 10
-CONNECTION_TIMEOUT = 3
+CONNECTION_TIMEOUT = 1
 
 TEST_SERVERS = [
     ("1.1.1.1", 443),
@@ -144,11 +144,24 @@ def monitor_internet():
 
 def start_connectivity_monitor():
 
-    global monitor_thread
+    global monitor_thread, internet_status
     if monitor_thread is not None and monitor_thread.is_alive():
         return True, "Connectivity monitoring is already running."
 
     stop_event.clear()
+
+    # Set an initial status before the dashboard renders. This avoids waiting
+    # for its periodic refresh to pick up the monitor thread's first result.
+    try:
+        connected = check_internet_connection()
+        initial_status = "ONLINE" if connected else "OFFLINE"
+        with status_lock:
+            previous_status = internet_status
+            internet_status = initial_status
+        if previous_status != initial_status:
+            log_connection_event(initial_status)
+    except Exception as error:
+        print("Initial internet check failed:", error)
 
     monitor_thread = threading.Thread(
         target=monitor_internet,
