@@ -1,0 +1,30 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+*.log
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Runtime event data
+security_events.json
