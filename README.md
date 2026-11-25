@@ -8,6 +8,8 @@ Download the latest [Windows installer](https://github.com/kunalsinghchouhan/Cyb
 
 For packet capture, install Npcap separately with WinPcap API-compatible mode enabled. Process monitoring can run without it. See [INSTALLATION.md](INSTALLATION.md).
 
+For a step-by-step guide to finding the source, downloading the installer, creating an account, starting monitoring, and setting up optional Ollama analysis, see [PROJECT_ACCESS_GUIDE.md](PROJECT_ACCESS_GUIDE.md).
+
 ## First run
 
 1. Launch Cybersecurity OS Agent from Start or the Desktop.

@@ -29,6 +29,7 @@ from detection_engine import (
 
 from risk_engine import calculate_risk
 from app_paths import get_app_paths
+from connectivity_monitor import internet_is_available
 
 
 # ==================================================
@@ -841,6 +842,10 @@ def start_network_monitor():
     global network_monitor_error
 
     with monitor_lock:
+
+        if not internet_is_available():
+            network_monitor_error = "Internet connection required. Network monitoring cannot be started."
+            return False, network_monitor_error
 
         if network_monitor_running:
             return False, "Network monitoring is already running."

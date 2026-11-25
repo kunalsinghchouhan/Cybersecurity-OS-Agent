@@ -1,4 +1,4 @@
-"""Independent supervisor for process, packet, and connectivity monitors."""
+"""Independent supervisor for process and packet monitoring engines."""
 
 from __future__ import annotations
 
@@ -10,11 +10,7 @@ import time
 import traceback
 
 from app_paths import get_app_paths
-from connectivity_monitor import (
-    get_connectivity_monitor_status,
-    start_connectivity_monitor,
-    stop_connectivity_monitor,
-)
+from connectivity_monitor import get_internet_status, internet_is_available
 from monitor_engine import monitor_loop
 from network_monitor import (
     get_network_monitor_status,
@@ -122,26 +118,6 @@ def _start_network_component():
         print(f"[NETWORK MONITOR UNAVAILABLE] {error}", flush=True)
 
 
-def _start_connectivity_component():
-    try:
-        result = start_connectivity_monitor()
-        success = bool(result[0]) if isinstance(result, tuple) else result is not False
-        message = str(result[1]) if isinstance(result, tuple) and len(result) > 1 else None
-        status = get_connectivity_monitor_status()
-        running = bool(status.get("running")) if isinstance(status, dict) else success
-        if not success or not running:
-            _set_component("connectivity", "UNAVAILABLE", status.get("error") or message)
-            return
-        _set_component(
-            "connectivity",
-            "RUNNING",
-            internet_status=status.get("status", "UNKNOWN"),
-        )
-    except Exception as error:
-        _set_component("connectivity", "UNAVAILABLE", error)
-        print(f"[CONNECTIVITY MONITOR UNAVAILABLE] {error}", flush=True)
-
-
 def run_agent():
     """Start component monitors and supervise them until a stop request arrives."""
     global started_at
@@ -157,6 +133,14 @@ def run_agent():
         APP_PATHS.agent_stop_request.unlink(missing_ok=True)
         return
 
+    # The controller performs an early check; this second check closes the
+    # launch race before either monitoring engine is started.
+    if not internet_is_available():
+        for name in components:
+            _set_component(name, "STOPPED")
+        publish_status(final_status="STOPPED", error="Internet connection required. Monitoring cannot be started.")
+        return
+
     def start_process_thread():
         thread = threading.Thread(
             target=_process_component,
@@ -168,9 +152,7 @@ def run_agent():
 
     process_thread = start_process_thread()
     _start_network_component()
-    _start_connectivity_component()
     next_network_retry = time.monotonic() + COMPONENT_RETRY_SECONDS
-    next_connectivity_retry = next_network_retry
 
     try:
         while not stop_event.is_set():
@@ -192,19 +174,18 @@ def run_agent():
                     _start_network_component()
                     next_network_retry = time.monotonic() + COMPONENT_RETRY_SECONDS
 
-            connectivity = get_connectivity_monitor_status()
-            if connectivity.get("running"):
-                _set_component(
-                    "connectivity",
-                    "RUNNING",
-                    internet_status=connectivity.get("status", "UNKNOWN"),
-                    error=None,
-                )
-            elif components["connectivity"]["status"] == "RUNNING":
-                _set_component("connectivity", "UNAVAILABLE", connectivity.get("error"))
-            if not connectivity.get("running") and time.monotonic() >= next_connectivity_retry:
-                _start_connectivity_component()
-                next_connectivity_retry = time.monotonic() + COMPONENT_RETRY_SECONDS
+            connectivity = get_internet_status()
+            _set_component(
+                "connectivity",
+                "RUNNING" if connectivity.get("fresh") else "UNAVAILABLE",
+                internet_status=connectivity.get("status", "UNKNOWN"),
+                error=connectivity.get("error"),
+            )
+            if (not connectivity.get("fresh")
+                    or connectivity.get("offline_confirmed")):
+                print("[INTERNET LOST] Stopping process and network monitoring.", flush=True)
+                stop_event.set()
+                break
 
             if not process_thread.is_alive() and not stop_event.is_set():
                 _set_component(
@@ -224,10 +205,6 @@ def run_agent():
             stop_network_monitor()
         except Exception as error:
             print(f"[NETWORK MONITOR STOP ERROR] {error}", flush=True)
-        try:
-            stop_connectivity_monitor()
-        except Exception as error:
-            print(f"[CONNECTIVITY MONITOR STOP ERROR] {error}", flush=True)
         process_thread.join(timeout=5)
         for name in components:
             _set_component(name, "STOPPED")

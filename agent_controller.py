@@ -10,6 +10,7 @@ import time
 import psutil
 
 from app_paths import get_app_paths, runtime_lock
+from connectivity_monitor import internet_is_available
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -186,6 +187,8 @@ def _stop_process(process):
 def start_agent():
     """Launch one detached supervisor; packet-capture failure is non-fatal."""
     try:
+        if not internet_is_available():
+            return False, "Internet connection required. Monitoring cannot be started."
         with runtime_lock(APP_PATHS, CONTROLLER_LOCK):
             current = _get_agent_process()
             if current is not None:

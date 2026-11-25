@@ -2,6 +2,7 @@ import time
 import psutil
 from datetime import datetime
 from app_paths import get_app_paths
+from connectivity_monitor import internet_is_available, internet_loss_confirmed
 from detection_engine import detect_process_events
 from risk_engine import calculate_risk
 from alert_manager import AlertManager
@@ -146,6 +147,10 @@ def monitor_connections():
 
 def monitor_loop(stop_event, on_cycle=None):
 
+    if not internet_is_available():
+        print("Internet connection required. Process monitoring cannot be started.", flush=True)
+        return
+
     print("Cybersecurity OS Agent - Integrated Monitor", flush=True)
     print("Monitoring processes and TCP connections.", flush=True)
 
@@ -162,6 +167,11 @@ def monitor_loop(stop_event, on_cycle=None):
             pass
 
     while not stop_event.is_set():
+
+        if internet_loss_confirmed():
+            print("Internet status unavailable or disconnected; process monitoring stopped.", flush=True)
+            stop_event.set()
+            break
 
         monitor_processes()
         monitor_connections()

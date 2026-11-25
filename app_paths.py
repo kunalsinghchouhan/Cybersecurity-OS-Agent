@@ -63,6 +63,10 @@ class AppPaths:
         return self.runtime / "agent_status.json"
 
     @property
+    def internet_status(self) -> Path:
+        return self.runtime / "internet_status.json"
+
+    @property
     def agent_stop_request(self) -> Path:
         return self.runtime / "agent_stop.request"
 

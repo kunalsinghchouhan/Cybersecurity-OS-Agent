@@ -1,6 +1,7 @@
 
 import os
 import json
+import time
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -29,6 +30,10 @@ if not CLOUD_MODE:
     )
 
     from app_paths import get_app_paths
+    from connectivity_monitor import get_internet_status, start_connectivity_monitor
+
+    # One daemon checker is reused across Streamlit reruns and never blocks UI.
+    start_connectivity_monitor()
 
 # -----------------------------------------
 # DATABASE
@@ -392,10 +397,6 @@ if st.sidebar.button("Log out", use_container_width=True):
     logout_user(cookie_controller)
     st.rerun()
 
-if not CLOUD_MODE and st.sidebar.button("Exit application", use_container_width=True):
-    get_app_paths().application_stop_request.write_text("stop\n", encoding="utf-8")
-    st.sidebar.success("The local dashboard is shutting down.")
-    st.stop()
 
 st.sidebar.divider()
 
@@ -415,7 +416,7 @@ selected_page = st.sidebar.radio(
 # periodic refresh. Other pages continue to refresh normally.
 if not CLOUD_MODE and selected_page != "AI Analysis":
     st_autorefresh(
-        interval=15000,
+        interval=5000,
         key="dashboard_auto_refresh"
     )
 
@@ -451,25 +452,15 @@ else:
     st.sidebar.caption("Current Agent Status")
     st.sidebar.info(status_text)
 
-    if current_agent_status.get("running"):
-        connectivity = current_agent_status.get("components", {}).get(
-            "connectivity", {}
-        )
-        connectivity_state = connectivity.get("status", "UNKNOWN")
-        internet_status = connectivity.get("internet_status", "UNKNOWN")
-
-        if connectivity_state == "RUNNING" and internet_status == "OFFLINE":
-            st.warning("Internet connectivity check: offline.")
-        elif connectivity_state == "RUNNING" and internet_status == "ONLINE":
-            st.success("Internet connectivity check: online.")
-        elif connectivity_state == "UNAVAILABLE":
-            st.warning("Internet connectivity check is unavailable.")
-            if connectivity.get("error"):
-                st.caption(str(connectivity["error"]))
-        else:
-            st.info("Internet connectivity check: waiting for first result.")
+    internet = get_internet_status()
+    internet_online = internet.get("fresh") and internet.get("status") == "ONLINE"
+    if internet_online:
+        st.sidebar.success("🟢 Internet Connected")
+    elif internet.get("status") == "OFFLINE":
+        st.sidebar.error("🔴 Internet Disconnected")
+        st.sidebar.warning("Internet connection required. Monitoring cannot be started.")
     else:
-        st.caption("Connectivity checks run only while monitoring is started.")
+        st.sidebar.warning("Internet status is checking or unavailable.")
 
     if current_user["role"] == "Admin":
 
@@ -477,7 +468,7 @@ else:
 
         with control_col1:
 
-            if st.button("▶ Start", use_container_width=True):
+            if st.button("▶ Start", use_container_width=True, disabled=not internet_online):
 
                 try:
                     success, message = start_agent()
@@ -558,6 +549,17 @@ if selected_page == "Overview":
         "Centralized summary of host activity, network traffic "
         "and detected security events."
     )
+
+    if not CLOUD_MODE:
+        internet = get_internet_status()
+        internet_online = internet.get("fresh") and internet.get("status") == "ONLINE"
+        if internet_online:
+            st.success("🟢 Internet Connected")
+        elif internet.get("status") == "OFFLINE":
+            st.error("🔴 Internet Disconnected")
+            st.warning("Internet connection required. Monitoring cannot be started.")
+        else:
+            st.warning("Internet status is checking or unavailable.", icon="🌐")
 
     total_alerts = len(alerts_df)
     total_packets = len(network_df)
@@ -1769,9 +1771,23 @@ elif selected_page == "AI Analysis":
                 use_container_width=True,
                 key="run_ai_analysis"
             ):
+                live_result = st.empty()
+                streamed_text = []
+                last_render = [time.perf_counter()]
+
+                def render_ai_token(token):
+                    streamed_text.append(token)
+                    now = time.perf_counter()
+                    if "\n" in token or now - last_render[0] >= 0.15:
+                        live_result.markdown("".join(streamed_text))
+                        last_render[0] = now
+
                 with st.spinner("AI is analyzing the security alert..."):
                     try:
-                        cached_analysis = analyze_alert(alert)
+                        cached_analysis = analyze_alert(
+                            alert,
+                            on_token=render_ai_token
+                        )
                         st.session_state.ai_analysis_cache[cache_key] = cached_analysis
                         st.rerun()
                     except Exception as error:

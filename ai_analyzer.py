@@ -9,7 +9,7 @@ MODEL_NAME = "qwen2.5:3b"
 session = requests.Session()
 
 
-def analyze_alert(alert):
+def analyze_alert(alert, on_token=None):
 
     start_time = time.perf_counter()
 
@@ -90,11 +90,13 @@ Rules:
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
-        "stream": False,
+        # Stream tokens so the dashboard can show the answer as it is generated.
+        "stream": True,
         "keep_alive": "30m",
         "options": {
         "temperature": 0.2,
-        "num_predict": 700,
+        # Cap output length; long reports are slower and less useful here.
+        "num_predict": 480,
         "num_ctx": 2048
     }
     }
@@ -108,6 +110,7 @@ Rules:
         response = session.post(
             OLLAMA_URL,
             json=payload,
+            stream=True,
             timeout=(5, 120)
         )
 
@@ -118,11 +121,25 @@ Rules:
 
         response.raise_for_status()
 
-        # response.raise_for_status()
+        fragments = []
+        for line in response.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            if isinstance(line, bytes):
+                line = line.decode("utf-8", errors="replace")
+            try:
+                chunk = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            fragment = chunk.get("response", "")
+            if fragment:
+                fragments.append(fragment)
+                if on_token:
+                    on_token(fragment)
+            if chunk.get("done"):
+                break
 
-        result = response.json()
-
-        analysis = result.get("response")
+        analysis = "".join(fragments)
 
         elapsed = time.perf_counter() - start_time
 
