@@ -3,9 +3,11 @@ import time
 import json
 from datetime import datetime
 from pathlib import Path
+import shutil
 
 from database import initialize_database, save_alert
 from MITRE_mapping import enrich_event_with_mitre
+from app_paths import get_app_paths
 
 
 class AlertManager:
@@ -14,8 +16,9 @@ class AlertManager:
         self.cooldown = cooldown
         self.last_alerts = {}
 
-        self.log_file = Path(__file__).with_name("security_events.log")
-        self.json_file = Path(__file__).with_name("security_events.json")
+        paths = get_app_paths()
+        self.log_file = paths.security_log
+        self.json_file = paths.security_events
 
         initialize_database()
 
@@ -36,8 +39,24 @@ class AlertManager:
                     raise ValueError("JSON root must be a list")
 
             except (json.JSONDecodeError, OSError, ValueError) as error:
-                print(f"[JSON ERROR] Could not read existing events: {error}")
-                return False
+                if isinstance(error, OSError):
+                    print(f"[JSON ERROR] Could not read existing events: {error}")
+                    return False
+                backup = self.json_file.with_name(
+                    f"{self.json_file.name}.corrupt.{datetime.now():%Y%m%d%H%M%S}"
+                )
+                try:
+                    shutil.copy2(self.json_file, backup)
+                    print(
+                        "[JSON WARNING] Existing event JSON was invalid and "
+                        f"has been preserved at {backup}. A new event log is starting."
+                    )
+                except OSError as backup_error:
+                    print(
+                        "[JSON ERROR] Existing event JSON is invalid and could "
+                        f"not be backed up: {backup_error}"
+                    )
+                    return False
 
         alerts.append(event)
 

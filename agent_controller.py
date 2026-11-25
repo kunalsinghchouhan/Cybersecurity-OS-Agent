@@ -1,233 +1,284 @@
+"""Start, inspect, and stop the independent local monitoring supervisor."""
+
+import json
+import os
+from pathlib import Path
 import subprocess
 import sys
 import time
+
 import psutil
 
-from pathlib import Path
-from network_monitor import (
-    start_network_monitor,
-    stop_network_monitor,
-    get_network_monitor_status
-)
+from app_paths import get_app_paths, runtime_lock
 
-from connectivity_monitor import (
-    start_connectivity_monitor,
-    stop_connectivity_monitor,
-    get_internet_status
-)
 
 BASE_DIR = Path(__file__).resolve().parent
-MONITOR_SCRIPT = BASE_DIR / "monitor_engine.py"
+APP_PATHS = get_app_paths()
+WORKER_SCRIPT = BASE_DIR / "agent_runtime.py"
+LEGACY_MONITOR_SCRIPT = BASE_DIR / "monitor_engine.py"
+PID_FILE = APP_PATHS.monitor_pid
+LOG_FILE = APP_PATHS.agent_log
+CONTROLLER_LOCK = "agent_controller.lock.sqlite"
+STARTUP_WAIT_SECONDS = 0.35
+STOP_WAIT_SECONDS = 15
 
-PID_FILE = BASE_DIR / "monitor_engine.pid"
-LOG_FILE = BASE_DIR / "agent_runtime.log"
+
+def _script_kind(process):
+    try:
+        expected = {
+            os.path.normcase(str(WORKER_SCRIPT.resolve())): "worker",
+            os.path.normcase(str(LEGACY_MONITOR_SCRIPT.resolve())): "legacy",
+        }
+        for argument in process.cmdline():
+            if argument == "--monitor-worker":
+                try:
+                    if os.path.normcase(process.exe()) == os.path.normcase(sys.executable):
+                        return "worker"
+                except (psutil.Error, OSError):
+                    return None
+            try:
+                candidate = os.path.normcase(str(Path(argument).resolve()))
+            except (OSError, ValueError):
+                continue
+            if candidate in expected:
+                return expected[candidate]
+    except (psutil.Error, OSError):
+        return None
+    return None
 
 
 def _get_agent_process():
-
+    """Return only a PID that still belongs to a recognized project worker."""
     if not PID_FILE.exists():
         return None
-
     try:
-        pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+        stored = json.loads(PID_FILE.read_text(encoding="utf-8"))
+        if isinstance(stored, dict):
+            pid = int(stored["pid"])
+            expected_created = float(stored["created"])
+        else:
+            # Accept old PID files, but only after validating the command line.
+            pid = int(stored)
+            expected_created = None
         process = psutil.Process(pid)
-
-        if not process.is_running():
-            PID_FILE.unlink(missing_ok=True)
-            return None
-
-        command = process.cmdline()
-        expected_script = str(MONITOR_SCRIPT.resolve()).lower()
-
-        if not any(
-            str(argument).lower() == expected_script
-            for argument in command
+        if (
+            not process.is_running()
+            or process.status() == psutil.STATUS_ZOMBIE
+            or _script_kind(process) is None
+            or (expected_created is not None and abs(process.create_time() - expected_created) > 0.01)
         ):
             PID_FILE.unlink(missing_ok=True)
             return None
-
-        if process.status() == psutil.STATUS_ZOMBIE:
-            PID_FILE.unlink(missing_ok=True)
-            return None
-
         return process
-
     except (ValueError, psutil.Error, OSError):
-        PID_FILE.unlink(missing_ok=True)
+        try:
+            PID_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
 
 
-def _network_is_running():
-
+def _read_worker_status():
     try:
-        status = get_network_monitor_status()
-
-        if isinstance(status, dict):
-            return bool(status.get("running", False))
-
-        if isinstance(status, str):
-            return status.upper() in ("RUNNING", "ACTIVE")
-
-        return bool(status)
-
-    except Exception:
-        return False
+        with APP_PATHS.agent_status.open("r", encoding="utf-8") as status_file:
+            value = json.load(status_file)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError, TypeError):
+        return None
 
 
-def _start_network():
-
-    result = start_network_monitor()
-
-    # Support either (success, message) or a simple boolean return.
-    if isinstance(result, tuple):
-        success = bool(result[0])
-        message = str(result[1]) if len(result) > 1 else ""
-
-        if not success:
-            raise RuntimeError(message or "Network monitor failed to start.")
-
-    elif result is False:
-        raise RuntimeError("Network monitor failed to start.")
-
-    # Verify that the monitor actually started.
-    time.sleep(0.5)
-
-    if not _network_is_running():
-        raise RuntimeError(
-            "TShark network monitor did not enter the running state."
-        )
+def _stopped_status(reason=None, previous=None):
+    previous_components = (previous or {}).get("components", {})
+    components = {}
+    for name in ("process", "network", "connectivity"):
+        old = previous_components.get(name, {})
+        components[name] = {
+            **old,
+            "previous_status": old.get("status"),
+            "status": "STOPPED",
+            "running": False,
+        }
+    return {
+        "status": "STOPPED",
+        "running": False,
+        "error": reason or (previous or {}).get("error"),
+        "components": components,
+        "started_at": (previous or {}).get("started_at"),
+        "updated_at": (previous or {}).get("updated_at"),
+    }
 
 
 def get_agent_status():
-
+    """Return supervisor state and the last reported health of each component."""
+    previous = _read_worker_status()
     process = _get_agent_process()
-
     if process is None:
-        return "STOPPED"
+        reason = None
+        if previous and previous.get("status") not in ("STOPPED", None):
+            reason = "Monitoring worker exited unexpectedly; use Start to restart it."
+        return _stopped_status(reason, previous)
 
-    return "RUNNING"
+    kind = _script_kind(process)
+    if kind == "legacy":
+        return {
+            "status": "LEGACY_RUNNING",
+            "running": True,
+            "error": "An older process-only monitor is active. Stop it before restarting monitoring.",
+            "components": {
+                "process": {"status": "RUNNING", "running": True, "error": None},
+                "network": {"status": "UNKNOWN", "running": False, "error": None},
+                "connectivity": {"status": "UNKNOWN", "running": False, "error": None},
+            },
+        }
+
+    if previous and previous.get("pid") == process.pid:
+        try:
+            updated_at = previous.get("updated_at")
+            if updated_at:
+                from datetime import datetime, timezone
+                last_update = datetime.fromisoformat(updated_at)
+                if (datetime.now(timezone.utc) - last_update).total_seconds() > 10:
+                    return {
+                        **previous,
+                        "status": "UNRESPONSIVE",
+                        "running": True,
+                        "error": "Monitoring worker has not refreshed its health status recently.",
+                    }
+        except (TypeError, ValueError):
+            pass
+        return {**previous, "running": previous.get("status") in ("RUNNING", "DEGRADED", "STARTING")}
+
+    return {
+        "status": "STARTING",
+        "running": True,
+        "pid": process.pid,
+        "error": None,
+        "components": {
+            name: {"status": "STARTING", "running": False, "error": None}
+            for name in ("process", "network", "connectivity")
+        },
+    }
+
+
+def _write_pid(pid):
+    temporary = PID_FILE.with_name(f".{PID_FILE.name}.{pid}.tmp")
+    with temporary.open("w", encoding="utf-8") as pid_file:
+        process = psutil.Process(pid)
+        json.dump({"pid": pid, "created": process.create_time()}, pid_file)
+        pid_file.flush()
+        os.fsync(pid_file.fileno())
+    os.replace(temporary, PID_FILE)
+
+
+def _stop_process(process):
+    try:
+        process.terminate()
+        try:
+            process.wait(timeout=STOP_WAIT_SECONDS)
+        except psutil.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        return True
+    except (psutil.Error, OSError):
+        return False
 
 
 def start_agent():
-
-    if get_agent_status() == "RUNNING":
-        return False, "Monitoring is already running."
-
-    process = None
-
+    """Launch one detached supervisor; packet-capture failure is non-fatal."""
     try:
+        with runtime_lock(APP_PATHS, CONTROLLER_LOCK):
+            current = _get_agent_process()
+            if current is not None:
+                if _script_kind(current) == "legacy":
+                    return False, (
+                        "The previous process-only monitor is still running. "
+                        "Stop it before starting the new monitoring supervisor."
+                    )
+                return False, "Monitoring is already running."
 
-        # STEP 1: Start process monitoring.
-        with LOG_FILE.open("a", encoding="utf-8") as log:
-
-            creation_flags = (
-                subprocess.CREATE_NEW_PROCESS_GROUP
-                if sys.platform == "win32"
-                else 0
-            )
-
-            process = subprocess.Popen(
-                [sys.executable, str(MONITOR_SCRIPT)],
-                cwd=BASE_DIR,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                creationflags=creation_flags
-            )
-
-        PID_FILE.write_text(
-            str(process.pid),
-            encoding="utf-8"
-        )
-
-        time.sleep(0.5)
-
-        if process.poll() is not None:
-            PID_FILE.unlink(missing_ok=True)
-
-            return (
-                False,
-                "Process monitor failed to start. Check agent_runtime.log."
-            )
-
-        # STEP 2: Start network monitoring.
-        # STEP 2: Start network monitoring.
-        _start_network()
-
-        # STEP 3: Start internet connectivity monitoring.
-        start_connectivity_monitor()
-
-        return True, (
-            "Process monitoring, TShark network monitoring "
-            "and internet connectivity monitoring started successfully."
-        )
-
-    except Exception as error:
-
-        # Roll back process monitoring if network startup fails.
-        if process is not None:
-
+            APP_PATHS.agent_stop_request.unlink(missing_ok=True)
             try:
-                if process.poll() is None:
-                    process.terminate()
-                    process.wait(timeout=5)
-            except Exception:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
+                with LOG_FILE.open("a", encoding="utf-8") as log:
+                    creation_flags = (
+                        subprocess.CREATE_NEW_PROCESS_GROUP
+                        if sys.platform == "win32"
+                        else 0
+                    )
+                    worker_command = (
+                        [sys.executable, "--monitor-worker"]
+                        if getattr(sys, "frozen", False)
+                        else [sys.executable, str(WORKER_SCRIPT)]
+                    )
+                    process = subprocess.Popen(
+                        worker_command,
+                        cwd=BASE_DIR,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        creationflags=creation_flags,
+                        close_fds=True,
+                    )
+                _write_pid(process.pid)
+            except (OSError, subprocess.SubprocessError) as error:
+                return False, f"Could not launch the monitoring worker: {error}"
 
-        PID_FILE.unlink(missing_ok=True)
+            time.sleep(STARTUP_WAIT_SECONDS)
+            if process.poll() is not None:
+                PID_FILE.unlink(missing_ok=True)
+                return (
+                    False,
+                    "Monitoring worker exited during startup. Check "
+                    f"{LOG_FILE} for details.",
+                )
 
-        # Also attempt to clean up a partially started network monitor.
-        try:
-            stop_network_monitor()
-        except Exception:
-            pass
-
+            return True, (
+                "Monitoring is starting on this computer. Component status "
+                "will update shortly; packet capture may be unavailable if "
+                "Npcap or capture permissions are missing."
+            )
+    except Exception as error:
         return False, f"Could not start monitoring: {error}"
 
 
 def stop_agent():
-
-    messages = []
-
-    # STEP 0: Stop internet connectivity monitoring.
+    """Request a graceful shutdown, with a bounded forced-stop fallback."""
     try:
-        stop_connectivity_monitor()
-        messages.append("Internet connectivity monitoring stopped.")
-    except Exception as error:
-        messages.append(f"Connectivity monitor error: {error}")
+        with runtime_lock(APP_PATHS, CONTROLLER_LOCK):
+            process = _get_agent_process()
+            if process is None:
+                APP_PATHS.agent_stop_request.unlink(missing_ok=True)
+                PID_FILE.unlink(missing_ok=True)
+                return True, "Monitoring was already stopped."
 
-    # STEP 1: Stop network monitoring.
-    try:
-        stop_network_monitor()
-        messages.append("Network monitoring stopped.")
-    except Exception as error:
-        messages.append(f"Network monitor error: {error}")
-
-    # STEP 2: Stop process monitoring.
-    process = _get_agent_process()
-
-    if process is not None:
-
-        try:
-            process.terminate()
+            if _script_kind(process) == "legacy":
+                stopped = _stop_process(process)
+                PID_FILE.unlink(missing_ok=True)
+                return (
+                    stopped,
+                    "Previous process-only monitoring stopped."
+                    if stopped else "Could not stop the previous monitoring process.",
+                )
 
             try:
-                process.wait(timeout=5)
+                APP_PATHS.agent_stop_request.write_text(
+                    "stop\n",
+                    encoding="utf-8",
+                )
+                process.wait(timeout=STOP_WAIT_SECONDS)
+                message = "Monitoring stopped cleanly."
             except psutil.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+                stopped = _stop_process(process)
+                message = (
+                    "Monitoring worker did not stop in time and was terminated."
+                    if stopped else "Monitoring worker did not stop cleanly."
+                )
+                if not stopped:
+                    return False, message
+            except (OSError, psutil.Error) as error:
+                return False, f"Could not request monitoring shutdown: {error}"
 
-            messages.append("Process monitoring stopped.")
-
-        except psutil.Error as error:
-            messages.append(f"Process monitor error: {error}")
-
-    else:
-        messages.append("Process monitoring was already stopped.")
-
-    PID_FILE.unlink(missing_ok=True)
-
-    return True, " ".join(messages)
+            PID_FILE.unlink(missing_ok=True)
+            APP_PATHS.agent_stop_request.unlink(missing_ok=True)
+            return True, message
+    except Exception as error:
+        return False, f"Could not stop monitoring: {error}"

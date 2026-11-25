@@ -1,112 +1,48 @@
 # Cybersecurity OS Agent
 
-A Python-based cybersecurity monitoring system designed to monitor system processes, network activity, and internet connectivity while detecting potentially suspicious behavior.
+Cybersecurity OS Agent is a local Windows application for reviewing process and network activity, security alerts, investigations, and candidate MITRE ATT&CK mappings. The dashboard and monitoring worker run on the computer where the application is installed. Monitoring is off until an Admin user starts it from the dashboard.
+
+## Windows installation
+
+Use `CybersecurityOSAgent_Setup.exe` when it is available from a trusted release. The installer creates Start Menu and optional Desktop shortcuts. The application stores each Windows user's records in `%LOCALAPPDATA%\CybersecurityOSAgent`; uninstalling leaves that data in place.
+
+For packet capture, install Npcap separately with WinPcap API-compatible mode enabled. Process monitoring can run without it. See [INSTALLATION.md](INSTALLATION.md).
+
+## First run
+
+1. Launch Cybersecurity OS Agent from Start or the Desktop.
+2. Create an account. The first account on that installation receives the Admin role; later accounts receive User access.
+3. Monitoring starts off. Select **Start** in Agent Control to begin local monitoring.
+4. Select **Stop** to stop it. Use **Exit application** in the dashboard to close the local dashboard server.
+
+The Admin role can control monitoring. All account and monitoring records are local to the Windows account. Passwords use salted PBKDF2-HMAC-SHA256 hashes.
 
 ## Features
 
-- **Process Monitoring:** Monitors running processes and system resource usage.
-- **Network Monitoring:** Captures and analyzes network packets.
-- **Internet Connectivity Monitoring:** Checks internet connectivity status.
-- **Detection Engine:** Identifies potentially suspicious system and network activities.
-- **Risk Scoring:** Assigns risk scores and severity levels to detected events.
-- **Alert Management:** Stores and manages security alerts.
-- **MITRE ATT&CK Mapping:** Maps supported detections to relevant MITRE ATT&CK techniques.
-- **SQLite Database:** Stores alerts and network packet information.
-- **Streamlit Dashboard:** Provides a graphical interface for monitoring and investigation.
-- **Authentication:** Provides user login and role-based access.
-- **AI Analysis:** Provides additional analysis of security alerts.
+- Process CPU and memory threshold alerts and TCP connection observations.
+- Scapy packet capture and packet inspection when Npcap and permissions are available.
+- DNS and network protocol analysis, traffic/port scan rules, and packet storage.
+- Alert severity/risk scores, investigation status, and candidate MITRE ATT&CK mapping.
+- Local login, saved browser sessions, and an AI analysis page that can use a local Ollama service.
 
-## Technology Stack
+The detections are threshold based and are not a replacement for endpoint protection or a managed SOC. AI analysis requires Ollama and its configured model to be installed separately.
 
-- Python
-- Streamlit
-- Scapy
-- Psutil
-- SQLite
-- Pandas
-- Plotly
-- MITRE ATT&CK Framework
+## Source development
 
-## Project Structure
-
-```text
-Cybersecurity-OS-Agent/
-├── main.py
-├── dashboard.py
-├── agent_controller.py
-├── monitor_engine.py
-├── network_monitor.py
-├── connectivity_monitor.py
-├── detection_engine.py
-├── risk_engine.py
-├── database.py
-├── auth.py
-├── MITRE_mapping.py
-├── ai_analyzer.py
-├── requirements.txt
-├── README.md
-└── .gitignore
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python main.py
 ```
 
-## Installation
+For development-only direct dashboard use, `streamlit run dashboard.py` is supported. The standalone launcher is `python main.py`; it binds Streamlit to `127.0.0.1` and opens the chosen local port in the default browser.
 
-1. Clone the repository:
+## Deployment
 
-   ```bash
-   git clone https://github.com/YOUR-USERNAME/Cybersecurity-OS-Agent.git
-   ```
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the PyInstaller/Inno Setup workflow and current environment limitations. See [USER_GUIDE.md](USER_GUIDE.md) for dashboard use and [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems.
+See [TEST_REPORT.md](TEST_REPORT.md) for completed checks and items that could not be verified here.
 
-2. Navigate to the project directory:
+## Cloud dashboard
 
-   ```bash
-   cd Cybersecurity-OS-Agent
-   ```
-
-3. Create a virtual environment:
-
-   ```bash
-   python -m venv .venv
-   ```
-
-4. Activate the virtual environment on Windows:
-
-   ```bash
-   .venv\Scripts\activate
-   ```
-
-5. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Running the Dashboard
-
-```bash
-streamlit run dashboard.py
-```
-
-## Deploying from GitHub
-
-This dashboard can be deployed from the `cloud-deployment` branch with
-[Streamlit Community Cloud](https://share.streamlit.io/):
-
-1. Connect your GitHub account and select this repository.
-2. Select the `cloud-deployment` branch and set the app file to
-   `dashboard.py`.
-3. In the app's **Advanced settings → Secrets**, add:
-
-   ```toml
-   CLOUD_MODE = true
-   ```
-
-Cloud mode runs the dashboard without starting the local Windows monitoring
-agent. It does not connect to a remote agent automatically. AI alert analysis
-also requires an Ollama service reachable from the deployed app; the default
-`localhost` Ollama address refers to the cloud container itself.
-
-Community Cloud redeploys the app when the selected GitHub branch is updated.
-
-## Disclaimer
-
-This project is developed for educational and cybersecurity monitoring purposes. Network monitoring and packet capture should only be performed on systems and networks where appropriate authorization has been obtained.
+The existing optional Streamlit Cloud mode (`CLOUD_MODE = true`) is a dashboard-only mode. It does not connect to this Windows app or start a remote monitoring agent.

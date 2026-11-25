@@ -18,6 +18,8 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+*-wal
+*-shm
 
 # VS Code
 .vscode/
@@ -28,3 +30,15 @@ Thumbs.db
 
 # Runtime event data
 security_events.json
+
+# Local packaging output
+/build/
+/dist/
+/build-output/
+/tools/
+/test package with spaces/
+/installer test with spaces/
+/installer test data/
+/installer user data verification/
+*.manifest
+/.codex-test-data/

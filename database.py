@@ -1,17 +1,14 @@
 import sqlite3
-from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
+from app_paths import ensure_database_file
 
 
 # ==================================================
 # CONFIGURATION
 # ==================================================
 
-DB_FILE = (
-    Path(__file__).resolve().parent
-    / "security_agent.db"
-)
+DB_FILE = ensure_database_file("security_agent.db")
 
 DATABASE_TIMEOUT = 15
 

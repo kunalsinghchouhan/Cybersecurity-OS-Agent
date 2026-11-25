@@ -28,10 +28,8 @@ if not CLOUD_MODE:
         get_agent_status
     )
 
-    from connectivity_monitor import (
-        start_connectivity_monitor,
-        get_internet_status
-    )
+    from connectivity_monitor import get_internet_status
+    from app_paths import get_app_paths
 
 # -----------------------------------------
 # DATABASE
@@ -92,47 +90,15 @@ if current_user is None:
 initialize_database()
 
 # ==================================================
-# LOCAL CONNECTIVITY MONITOR STARTUP
-# ==================================================
-
-if not CLOUD_MODE:
-
-    if "connectivity_started" not in st.session_state:
-
-        success, message = start_connectivity_monitor()
-
-        st.session_state.connectivity_started = success
-
-# ==================================================
 # INTERNET CONNECTION STATUS DISPLAY
 # ==================================================
 
 if CLOUD_MODE:
-
     st.info(
         "Connectivity monitoring is currently running only "
         "on the local Windows agent. Remote agent integration "
         "will be configured separately."
     )
-
-else:
-
-    internet = get_internet_status()
-
-    if internet["status"] == "OFFLINE":
-
-        st.error(
-            "Internet Connection Lost! "
-            "Please check your internet connection and try again."
-        )
-
-    elif internet["status"] == "UNKNOWN":
-
-        st.warning("Checking internet connectivity...")
-
-    else:
-
-        st.success("Internet Connection: Connected")
 
 
 # ==================================================
@@ -427,6 +393,11 @@ if st.sidebar.button("Log out", use_container_width=True):
     logout_user(cookie_controller)
     st.rerun()
 
+if not CLOUD_MODE and st.sidebar.button("Exit application", use_container_width=True):
+    get_app_paths().application_stop_request.write_text("stop\n", encoding="utf-8")
+    st.sidebar.success("The local dashboard is shutting down.")
+    st.stop()
+
 st.sidebar.divider()
 
 selected_page = st.sidebar.radio(
@@ -444,9 +415,8 @@ selected_page = st.sidebar.radio(
 # Avoid interrupting long running AI requests with the dashboard's
 # periodic refresh. Other pages continue to refresh normally.
 if not CLOUD_MODE and selected_page != "AI Analysis":
-    connectivity_status = get_internet_status()["status"]
     st_autorefresh(
-        interval=1000 if connectivity_status == "UNKNOWN" else 15000,
+        interval=15000,
         key="dashboard_auto_refresh"
     )
 
@@ -480,6 +450,15 @@ else:
 
     st.sidebar.caption("Current Agent Status")
     st.sidebar.info(status_text)
+
+    if current_agent_status.get("running"):
+        internet = get_internet_status()
+        if internet["status"] == "OFFLINE":
+            st.warning("Internet connectivity check: offline.")
+        elif internet["status"] == "ONLINE":
+            st.success("Internet connectivity check: online.")
+    else:
+        st.caption("Connectivity checks run only while monitoring is started.")
 
     if current_user["role"] == "Admin":
 

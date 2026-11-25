@@ -1,7 +1,7 @@
 import time
 import psutil
 from datetime import datetime
-from pathlib import Path
+from app_paths import get_app_paths
 from detection_engine import detect_process_events
 from risk_engine import calculate_risk
 from alert_manager import AlertManager
@@ -11,11 +11,12 @@ Memory_Threshold = 500
 Poll_Interval = 3
 Alert_Cooldown = 60
 
-Log_File = Path(__file__).with_name("security_events.log")
+Log_File = get_app_paths().security_log
 
 # last_alerts = {}
 alert_manager = AlertManager(cooldown=Alert_Cooldown)
 known_connections = set()
+connection_monitor_warning_shown = False
 
 def timestamp():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -73,12 +74,18 @@ def monitor_processes():
             continue
 
 def monitor_connections():
-    global known_connections
+    global known_connections, connection_monitor_warning_shown
 
     try:
         connections = psutil.net_connections(kind="tcp")
-    except (psutil.AccessDenied, OSError) as error:
-        print(f"Unable to read TCP connections: {error}", flush=True)
+    except (psutil.AccessDenied, OSError, RuntimeError) as error:
+        if not connection_monitor_warning_shown:
+            print(
+                "TCP connection details are unavailable for this account: "
+                f"{error}",
+                flush=True,
+            )
+            connection_monitor_warning_shown = True
         return
 
     current_connections = set()
@@ -137,15 +144,16 @@ def monitor_connections():
     known_connections = current_connections
 
 
-def main():
-    print("Cybersecurity OS Agent - Integrated Monitor")
-    print("Monitoring processes and TCP connections.")
-    print("Press Ctrl+C to stop.\n")
+def monitor_loop(stop_event, on_cycle=None):
 
-    # Prime CPU counters so the first reading is not treated as a real measurement.
+    print("Cybersecurity OS Agent - Integrated Monitor", flush=True)
+    print("Monitoring processes and TCP connections.", flush=True)
+
+    # Prime CPU counters
     for process in psutil.process_iter():
         try:
             process.cpu_percent(interval=None)
+
         except (
             psutil.NoSuchProcess,
             psutil.AccessDenied,
@@ -153,13 +161,33 @@ def main():
         ):
             pass
 
+    while not stop_event.is_set():
+
+        monitor_processes()
+        monitor_connections()
+
+        # Notify supervisor that one monitoring cycle completed
+        if on_cycle:
+            on_cycle()
+
+        # Wait while allowing the supervisor to stop us immediately
+        if stop_event.wait(Poll_Interval):
+            break
+
+    print("[PROCESS MONITOR STOPPED]", flush=True)
+
+
+def main():
+
+    import threading
+
+    stop_event = threading.Event()
+
     try:
-        while True:
-            monitor_processes()
-            monitor_connections()
-            time.sleep(Poll_Interval)
+        monitor_loop(stop_event)
 
     except KeyboardInterrupt:
+        stop_event.set()
         print("\nMonitoring stopped safely.", flush=True)
 
 

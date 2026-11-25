@@ -1,14 +1,18 @@
-from scapy.all import (
-    AsyncSniffer, conf, Ether, IP, IPv6, TCP, UDP, ICMP,
-    DNS, DNSQR, ARP, Raw
-)
+from scapy.sendrecv import AsyncSniffer
+from scapy.config import conf
+from scapy.layers.dns import DNS, DNSQR
+from scapy.layers.inet import ICMP, IP, TCP, UDP
+from scapy.layers.inet6 import IPv6
+from scapy.layers.l2 import ARP, Ether
+from scapy.packet import Raw
 
 from collections import defaultdict, deque, Counter
 from datetime import datetime
-from pathlib import Path
 from threading import RLock
 import time
 import json
+import ctypes
+import sys
 
 from MITRE_mapping import enrich_event_with_mitre
 
@@ -24,6 +28,7 @@ from detection_engine import (
 )
 
 from risk_engine import calculate_risk
+from app_paths import get_app_paths
 
 
 # ==================================================
@@ -42,10 +47,7 @@ DNS_COOLDOWN = 10
 MAX_RAW_BYTES = 2048
 MAX_DETAILS_LENGTH = 12000
 
-LOG_FILE = (
-    Path(__file__).resolve().parent
-    / "security_events.log"
-)
+LOG_FILE = get_app_paths().security_log
 
 
 # ==================================================
@@ -857,6 +859,18 @@ def start_network_monitor():
 
         try:
 
+            if sys.platform == "win32":
+                try:
+                    ctypes.WinDLL("wpcap.dll")
+                except OSError as dependency_error:
+                    raise RuntimeError(
+                        "Windows packet capture is unavailable. Install Npcap "
+                        "with WinPcap API-compatible mode enabled, then restart "
+                        "Cybersecurity OS Agent. Packet capture may also require "
+                        "the Npcap service to allow this user to access the driver. "
+                        f"Details: {dependency_error}"
+                    ) from dependency_error
+
             print("\n" + "=" * 60)
             print(" CYBERSECURITY OS AGENT - ADVANCED NETWORK MONITOR")
             print("=" * 60)
@@ -939,8 +953,17 @@ def stop_network_monitor():
         try:
 
             if network_sniffer.running:
-
-                network_sniffer.stop()
+                # Some Windows capture drivers can block while waiting for a
+                # packet. Request Scapy's break loop without an unbounded join.
+                network_sniffer.stop(join=False)
+                capture_thread = getattr(network_sniffer, "thread", None)
+                if capture_thread is not None:
+                    capture_thread.join(timeout=5)
+                    if capture_thread.is_alive():
+                        raise TimeoutError(
+                            "Packet capture did not stop within 5 seconds. "
+                            "Check the Npcap service and capture permissions."
+                        )
 
             network_sniffer = None
             network_monitor_running = False
@@ -952,6 +975,7 @@ def stop_network_monitor():
         except Exception as error:
 
             network_monitor_running = False
+            network_monitor_error = str(error)
 
             print("Network shutdown error:", error)
 
@@ -965,6 +989,7 @@ def stop_network_monitor():
 def get_network_monitor_status():
 
     global network_monitor_running
+    global network_monitor_error
 
     with monitor_lock:
 
@@ -977,6 +1002,8 @@ def get_network_monitor_status():
             except Exception:
 
                 network_monitor_running = False
+                if getattr(network_sniffer, "exception", None) is not None:
+                    network_monitor_error = str(network_sniffer.exception)
 
         else:
 

@@ -2,7 +2,7 @@ import socket
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
+from app_paths import get_app_paths
 
 
 # --------------------------------------------------
@@ -17,10 +17,7 @@ TEST_SERVERS = [
     ("8.8.8.8", 443)
 ]
 
-LOG_FILE = (
-    Path(__file__).resolve().parent
-    / "security_events.log"
-)
+LOG_FILE = get_app_paths().security_log
 
 
 # --------------------------------------------------
@@ -202,3 +199,26 @@ def get_internet_status():
             "status": internet_status,
             "connected": internet_status == "ONLINE"
         }
+# --------------------------------------------------
+# GET CONNECTIVITY MONITOR STATUS
+# --------------------------------------------------
+
+def get_connectivity_monitor_status():
+
+    global monitor_thread
+
+    with status_lock:
+        current_status = internet_status
+
+    running = (
+        monitor_thread is not None
+        and monitor_thread.is_alive()
+        and not stop_event.is_set()
+    )
+
+    return {
+        "running": running,
+        "status": current_status,
+        "connected": current_status == "ONLINE",
+        "error": None
+    }

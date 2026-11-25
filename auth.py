@@ -14,13 +14,13 @@ import sqlite3
 import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import streamlit as st
 from streamlit_cookies_controller import CookieController
+from app_paths import ensure_database_file
 
 
-AUTH_DB = Path(__file__).resolve().parent / "security_agent_users.db"
+AUTH_DB = ensure_database_file("security_agent_users.db")
 HASH_NAME = "sha256"
 PBKDF2_ITERATIONS = 310_000
 SALT_BYTES = 16
