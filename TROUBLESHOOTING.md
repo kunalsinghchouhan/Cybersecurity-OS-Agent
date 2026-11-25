@@ -7,6 +7,18 @@
 - Confirm a local security tool is not blocking `127.0.0.1` connections.
 - The launcher selects a free loopback port for each start; it does not expose the dashboard to the network.
 
+## `ModuleNotFoundError: streamlit_cookies_controller`
+
+This happens when the source app is launched with a Python interpreter that does not have the project requirements installed. From the repository folder, create `.venv` first if it does not exist, then install and launch with that interpreter:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe main.py
+```
+
+If using VS Code, select `.venv\Scripts\python.exe` as the project interpreter. The standalone Windows installer bundles this dependency; launch the installed app instead of `dashboard.py` when Python should not be required.
+
 ## Network monitoring is unavailable
 
 - Install Npcap separately and select WinPcap API-compatible mode.
