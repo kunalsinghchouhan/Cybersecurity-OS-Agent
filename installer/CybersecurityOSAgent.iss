@@ -1,7 +1,10 @@
 #define AppName "Cybersecurity OS Agent"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #define AppPublisher "Cybersecurity OS Agent"
 #define AppExeName "CybersecurityOSAgent.exe"
+#ifndef PackageDir
+#define PackageDir "..\dist\CybersecurityOSAgent"
+#endif
 
 [Setup]
 AppId={{B9239897-E87D-4D47-85A8-3D604D8D3F1A}
@@ -28,7 +31,7 @@ Uninstallable=yes
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "..\dist\CybersecurityOSAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExeName}"

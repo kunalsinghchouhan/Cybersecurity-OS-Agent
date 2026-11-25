@@ -28,7 +28,6 @@ if not CLOUD_MODE:
         get_agent_status
     )
 
-    from connectivity_monitor import get_internet_status
     from app_paths import get_app_paths
 
 # -----------------------------------------
@@ -441,6 +440,7 @@ if CLOUD_MODE:
 
 else:
 
+    current_agent_status = {"running": False, "components": {}}
     try:
         current_agent_status = get_agent_status()
         status_text = format_agent_status(current_agent_status)
@@ -452,11 +452,22 @@ else:
     st.sidebar.info(status_text)
 
     if current_agent_status.get("running"):
-        internet = get_internet_status()
-        if internet["status"] == "OFFLINE":
+        connectivity = current_agent_status.get("components", {}).get(
+            "connectivity", {}
+        )
+        connectivity_state = connectivity.get("status", "UNKNOWN")
+        internet_status = connectivity.get("internet_status", "UNKNOWN")
+
+        if connectivity_state == "RUNNING" and internet_status == "OFFLINE":
             st.warning("Internet connectivity check: offline.")
-        elif internet["status"] == "ONLINE":
+        elif connectivity_state == "RUNNING" and internet_status == "ONLINE":
             st.success("Internet connectivity check: online.")
+        elif connectivity_state == "UNAVAILABLE":
+            st.warning("Internet connectivity check is unavailable.")
+            if connectivity.get("error"):
+                st.caption(str(connectivity["error"]))
+        else:
+            st.info("Internet connectivity check: waiting for first result.")
     else:
         st.caption("Connectivity checks run only while monitoring is started.")
 
