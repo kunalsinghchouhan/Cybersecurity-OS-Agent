@@ -4,7 +4,7 @@ Cybersecurity OS Agent is a local Windows application for reviewing process and 
 
 ## Windows installation
 
-Use `CybersecurityOSAgent_Setup.exe` when it is available from a trusted release. The installer creates Start Menu and optional Desktop shortcuts. The application stores each Windows user's records in `%LOCALAPPDATA%\CybersecurityOSAgent`; uninstalling leaves that data in place.
+Use `CybersecurityAgent_Setup.exe` when it is available from a trusted release. The installer creates Start Menu and optional Desktop shortcuts. The application stores each Windows user's records in `%LOCALAPPDATA%\CybersecurityOSAgent`; uninstalling leaves that data in place.
 
 For packet capture, install Npcap separately with WinPcap API-compatible mode enabled. Process monitoring can run without it. See [INSTALLATION.md](INSTALLATION.md).
 

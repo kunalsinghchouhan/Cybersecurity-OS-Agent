@@ -12,10 +12,10 @@ Date: 2026-11-25
 - Database checks covered migration into the configured per-user data path, alert insert/read/delete, packet insert/read/delete, and SQLite integrity.
 - The one-folder PyInstaller build completed. The packaged launcher was tested from a path with spaces: `/`, `/index.html`, `/_stcore/health`, and `/manifest.json` returned HTTP 200; monitoring remained stopped; and the shutdown request closed the app cleanly.
 - The packaged monitoring worker started in frozen mode, reported its components, and exited after its stop request.
-- Inno Setup 7.1.1 compiled `dist\\CybersecurityOSAgent_Setup.exe` successfully. The installer supports x64-compatible Windows and leaves user data outside its installation directory.
+- Inno Setup 7.1.1 compiled `dist\\CybersecurityAgent_Setup.exe` successfully. The installer supports x64-compatible Windows and leaves user data outside its installation directory.
 - Installer smoke test used an installation folder containing spaces. The Start Menu shortcut targeted the installed executable, the installed dashboard health and root routes returned HTTP 200, and monitoring remained stopped on dashboard worker startup.
 - Silent uninstall removed the installed program and Start Menu shortcut while preserving a marker and the database files in the separate user-data directory.
-- `git diff --check` completed without whitespace errors. The initial Git index was restored to unstaged state; no commit or push was made.
+- `git diff --check` completed without whitespace errors. The deployment source was committed as `c39e8ae`; the GitHub upload is still pending remote access.
 
 ## Partial or blocked
 

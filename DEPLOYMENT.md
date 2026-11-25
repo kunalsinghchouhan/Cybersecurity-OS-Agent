@@ -53,7 +53,7 @@ Use a clean Windows build machine and do not copy local `.db`, `.json`, or `.log
 
 3. Check `dist\CybersecurityOSAgent\CybersecurityOSAgent.exe` on a clean Windows account, from a working directory containing spaces, and without Python installed. Confirm first-run account creation, monitoring off, worker start/stop, browser refresh/multiple tabs, data persistence, logs, and shutdown. This workspace build has passed launcher HTTP smoke checks from a path with spaces; clean-machine and Python-free behavior remain to be checked.
 
-4. Install Inno Setup on the build machine, then compile `installer\CybersecurityOSAgent.iss` with the Inno Setup compiler. The output is `dist\CybersecurityOSAgent_Setup.exe`.
+4. Install Inno Setup on the build machine, then compile `installer\CybersecurityOSAgent.iss` with the Inno Setup compiler. The output is `dist\CybersecurityAgent_Setup.exe`.
 
 5. Test install, shortcuts, upgrade-in-place, and uninstall. Confirm uninstall leaves `%LOCALAPPDATA%\CybersecurityOSAgent` intact. Test packet capture separately on a machine with Npcap and appropriate permissions.
 
@@ -65,4 +65,4 @@ The one-folder PyInstaller package and Inno Setup installer compiled successfull
 
 ## Publishing with GitHub Releases
 
-After a clean Windows build and installation test, create a release tag and attach `dist\CybersecurityOSAgent_Setup.exe` through the repository's GitHub Releases page. Include the version, supported Windows versions, SHA-256 checksum, Npcap note, and known limitations in the release text. Do not upload databases, logs, or user data. Publishing is intentionally left to the repository owner.
+After a clean Windows build and installation test, create a release tag and attach `dist\CybersecurityAgent_Setup.exe` through the repository's GitHub Releases page. Include the version, supported Windows versions, SHA-256 checksum, Npcap note, and known limitations in the release text. Do not upload databases, logs, or user data. Publishing is done by the repository maintainer.

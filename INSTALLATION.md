@@ -10,7 +10,7 @@
 
 ## Installer
 
-1. Download `CybersecurityOSAgent_Setup.exe` from a trusted project release.
+1. Download `CybersecurityAgent_Setup.exe` from a trusted project release.
 2. Run the installer and accept the Windows elevation prompt for Program Files installation.
 3. Keep the optional Desktop shortcut selected if desired.
 4. If prompted, install Npcap separately from [npcap.com](https://npcap.com/#download). Select WinPcap API-compatible mode. Follow Npcap's own driver and privilege choices.
